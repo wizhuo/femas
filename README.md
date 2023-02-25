@@ -36,7 +36,7 @@
 
 ## Introduction
 **Femas is an open source product form of Tencent Cloud's microservice platform [TSF](https://cloud.tencent.com/product/tsf) . It focuses on the running state of microservices and provides one-stop microservice management and control capabilities such as multi-frame unified service discovery, north-south and east-west traffic management, service observability, and configuration management. In the service architecture transformation, the core issues are difficult to reuse heterogeneous frameworks, difficult to manage and control surge traffic, and time-consuming for troubleshooting and recovery.**
-> - data plane: Femas uses the multi-runtime architecture design to standardize and modularize the underlying core capabilities of microservices, and assemble the basic components split in the microservice field through a reasonable architecture to meet diversified microservice scenarios. , lightweight, portable, low-cost, cloud-free vendor binding.
+> - data plane: Femas uses the multi-runtime architecture design to standardize and modularize the underlying core capabilities of microservices, and assemble the basic components split in the microservice field through a reasonable architecture to meet diversified microservice scenarios. , lightweight, portable, low-cost, cloud-free vendor binding,Currently, the community provides governance data planes in two proxyLess modes: `SDK` and business-agnostic `JVM TI Agent`.
 > - control plane: Femas provides a unified control plane standard protocol, a set of governance protocols, and multi-language and multi-data plane distribution.
 ### ability
 ![image](https://user-images.githubusercontent.com/22976760/153156369-6fa5626e-f0a5-452b-8519-fe84013b5186.png)
@@ -59,11 +59,64 @@ Femas implements the management of open source registries (currently supports `C
 - Femas is not bound to any specific components, as long as the components that conform to the Femas standardized protocol can be managed on the Femas platform, it is convenient for users at all levels to learn, use and develop secondary.
 ![image](https://user-images.githubusercontent.com/22976760/158731778-0005ff57-433b-4001-b135-b6879cd7ede8.png)
 - **Sink-type non-intrusive access, zero cost for user transformation**.
-> - `Agent` bytecode injection (`TODO`)
-> - `ServiceMesh` service mesh
+> - `Java Agent` bytecode injection
+> - `ServiceMesh` service mesh(TODO)
 - Femas hopes to summarize Tencent's microservice product center's understanding of microservices into a platform to help users quickly build an enterprise-level microservice ecosystem.
 - Femas supports Tencent's internal ecosystem of billions of users.
 ## Quick start
+
+### Code Structure
+```
+.
+├── femas-adaptor # adaptation layer plugin for paas plateform
+│   └── femas-adaptor-opensource-admin #  The PAAS platform adaptation layer is adapted to the open source platform by default. If you want to connect to other control surfaces, you can plug-in an adapter. Secondly, you can assemble the capability matrix required by the platform here
+├── femas-admin # admin 
+├── femas-admin-starter # starter for admin
+├── femas-agent # java agent module
+│   ├── femas-agent-core # javaagent bytebuddy core module
+│   ├── femas-agent-example 
+│   ├── femas-agent-plugin # byte-code plugin module
+│   ├── femas-agent-starter # premain entrance
+│   └── femas-agent-tools 
+├── femas-api # the abstract layer of microservice life cycle, is convenient for users to connect with heterogeneous RPC framework
+├── femas-benchmark
+├── femas-common # toolkit
+├── femas-config #  abstraction layer of configuration module
+├── femas-config-impl # implementation layer of configuration module
+│   ├── femas-config-consul # consul for femas-config
+│   ├── femas-config-nacos # nacos for femas-config
+│   └── femas-config-paas # pass for femas-config
+├── femas-dependencies-bom # Unified management of femas dependent versions
+├── femas-example # demo
+│   ├── feams-example-springcloud-hoxton
+│   ├── femas-example-alibaba-dubbo-consumer
+│   ├── femas-example-alibaba-dubbo-provider
+│   ├── femas-example-springcloud-2020-consumer
+│   ├── femas-example-springcloud-2020-provider
+│   ├── femas-example-springcloud-greenwich-consumer
+│   ├── femas-example-springcloud-greenwich-gateway
+│   ├── femas-example-springcloud-greenwich-provider
+│   └── femas-example-springcloud-greenwich-zuul
+├── femas-extensions # rpc layer docking framework SDK
+│   ├── femas-c-dubbo # extension for dubbo
+│   └── femas-extension-springcloud #  extension for springcloud
+├── femas-governance # abstraction layer of governance module
+├── femas-governance-impl # implementation layer of governance module
+├── femas-helm
+├── femas-registry # abstraction layer of registry module
+├── femas-registry-impl # implementation layer of registry module
+│   ├── femas-registry-consul
+│   ├── femas-registry-etcd
+│   ├── femas-registry-eureka
+│   ├── femas-registry-k8s
+│   ├── femas-registry-nacos
+│   └── femas-registry-polaris
+├── femas-starters # Starter dependency of user's SDK
+│   ├── femas-dubbo-starters
+│   └── femas-springcloud-starters
+└── jacoco-aggregate
+```
+
 
 ### Install the server
 
@@ -201,10 +254,12 @@ spring:
 # discovery:
 # server-addr: 127.0.0.1:8848
  ```
- ##### Femas component configuration file path: resources/femas.conf (Ymal format, used to configure femas-related local configuration, such as paas address, custom registry cluster, custom governance rules, etc.)
+ ##### Femas component configuration file path: resources/femas.yaml (Ymal format, used to configure femas-related local configuration, such as paas address, custom registry cluster, custom governance rules, etc.)
  ```
 # Configure the paas background address, if not configured, get the rules from the local configuration file
 paas_server_address: http://127.0.0.1:8080
+femas_namespace_id=Namespace ID
+femas_prog_version=Service version
  
 # Use the method provided by Femas to access the registration center, how to use dubbo or self-developed protocol
 femas_registry_ip: 127.0.0.1 //Registry center cluster address
@@ -264,10 +319,13 @@ circuitBreaker:
 > - Q coins and souvenirs
 
 ## contact us
-![image](https://user-images.githubusercontent.com/22976760/153156454-9e1718e8-e676-4f1b-838b-bbe95e9237f7.png)
 
-![image](https://user-images.githubusercontent.com/22976760/160102120-e40069d2-bc28-456c-bfb0-5bed570c5484.png)
+![群微信号](https://user-images.githubusercontent.com/22976760/177910258-922aa1b5-d1c5-4d77-93a1-8585bafe1180.jpg)
 
+
+Add WeChat, note [femas].
+
+![微信号](https://user-images.githubusercontent.com/22976760/177910264-9413c43e-2259-49f5-b9ef-3d24ba271ab0.jpg)
 
 ## License
 [LICENSE.](./LICENSE)

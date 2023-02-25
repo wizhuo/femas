@@ -2,9 +2,10 @@ package com.tencent.tsf.femas.governance.event;
 
 import com.tencent.tsf.femas.common.context.Context;
 import com.tencent.tsf.femas.common.entity.Service;
-import com.tencent.tsf.femas.governance.route.entity.RouteRuleGroup;
 import java.util.Date;
 import java.util.Map;
+
+import com.tencent.tsf.femas.plugin.impl.config.rule.router.RouteRuleGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +21,7 @@ public class RouterEventCollector extends EventCollector {
         FemasEventData eventData = FemasEventData.custom()
                 .setEventType(EventTypeEnum.ROUTER)
                 .setInstanceId(instanceId)
-                .setOccurTime(new Date().getTime())
+                .setOccurTime(System.currentTimeMillis())
                 .setUpstream(Context.getSystemTag("service.name"))
                 .setDownstream(targetService.getName())
                 .setAddition(UPSTREAM_NAMESPACE_ID_KEY, Context.getSystemTag("namespace.id"))

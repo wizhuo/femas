@@ -4,17 +4,24 @@ import com.google.gson.Gson;
 import com.tencent.tsf.femas.common.context.Context;
 import com.tencent.tsf.femas.common.context.factory.ContextFactory;
 import com.tencent.tsf.femas.common.entity.Service;
+import com.tencent.tsf.femas.common.exception.FemasRuntimeException;
 import com.tencent.tsf.femas.common.httpclient.ApacheHttpClientHolder;
+import com.tencent.tsf.femas.common.httpclient.HttpLongPollingConnectorManager;
 import com.tencent.tsf.femas.common.httpclient.client.AbstractHttpClient;
 import com.tencent.tsf.femas.common.httpclient.factory.ApacheDefaultHttpClientFactory;
+import com.tencent.tsf.femas.common.httpclient.factory.ApacheLongPollingHttpClientFactory;
 import com.tencent.tsf.femas.common.httpclient.factory.HttpClientFactory;
+import com.tencent.tsf.femas.common.util.CollectionUtil;
 import com.tencent.tsf.femas.common.util.HttpHeaderKeys;
 import com.tencent.tsf.femas.common.util.HttpResult;
 import com.tencent.tsf.femas.common.util.StringUtils;
 import com.tencent.tsf.femas.common.util.id.UIdGenerator;
-import com.tencent.tsf.femas.config.AbstractConfigHttpClientManager;
 import com.tencent.tsf.femas.config.FemasConfig;
 import com.tencent.tsf.femas.governance.api.entity.ServiceApiRequest;
+import com.tencent.tsf.femas.governance.connector.server.ServerConnectorManager;
+import com.tencent.tsf.femas.plugin.config.global.ServerConnectorEnum;
+import com.tencent.tsf.femas.plugin.context.ConfigContext;
+import com.tencent.tsf.femas.plugin.impl.config.ServerConnectorConfigImpl;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -31,36 +38,63 @@ import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManager {
+public class FemasConfigHttpClientManager implements ServerConnectorManager, HttpLongPollingConnectorManager {
 
-    private static final  Logger log = LoggerFactory.getLogger(FemasConfigHttpClientManager.class);
-    private static final  String webContext = "/atom";
-    private static final  String fetchKeyUrl = "/v1/sdk/fetchData";
-    private static final  String reportCircuitEvent = "/v1/sdk/reportServiceEvent";
-    private static final  String reportApis = "/v1/sdk/reportServiceApi";
-    private static final  String intiNamespace = "/v1/sdk/initNamespace";
-    private static final  int DEFAULT_READ_TIME_OUT_MILLIS = Integer
+    private static final Logger log = LoggerFactory.getLogger(FemasConfigHttpClientManager.class);
+
+    private static final String webContext = "/atom";
+    private static final String fetchKeyUrl = "/v1/sdk/fetchData";
+    private static final String longPollingListenerKeyUrl = "/v1/sdk/listener";
+    private static final String reportCircuitEvent = "/v1/sdk/reportServiceEvent";
+    private static final String reportApis = "/v1/sdk/reportServiceApi";
+    private static final String intiNamespace = "/v1/sdk/initNamespace";
+    private static final int DEFAULT_READ_TIME_OUT_MILLIS = Integer
             .getInteger("femas.paas.config.client.readTimeOut", 50000);
-    private static final  int DEFAULT_CON_TIME_OUT_MILLIS = Integer
+    private static final int DEFAULT_CON_TIME_OUT_MILLIS = Integer
             .getInteger("femas.paas.config.client.conTimeOut", 3000);
+    private static final int DEFAULT_LONG_POLLING_READ_TIME_OUT_MILLIS = Integer
+            .getInteger("femas.paas.config.client.longPolling.readTimeOut", 900000);
+    private static final int DEFAULT_LONG_POLLING_CON_TIME_OUT_MILLIS = Integer
+            .getInteger("femas.paas.config.client.longPolling.conTimeOut", 3000);
     private static Context commonContext = ContextFactory.getContextInstance();
     private static volatile FemasConfigHttpClientManager singleton = null;
     private volatile Context context = ContextFactory.getContextInstance();
+    private static AtomicInteger NEXT_SERVER_INDEX = new AtomicInteger(0);
+
+    @Override
+    public void init(ConfigContext conf) throws FemasRuntimeException {
+        ServerConnectorConfigImpl connectorConfig = (ServerConnectorConfigImpl) conf.getConfig().getGlobal().getServerConnector();
+        if (connectorConfig == null || CollectionUtil.isEmpty(connectorConfig.getAddresses()) || StringUtils.isEmpty(connectorConfig.getProtocol())) {
+            log.warn("server connector init failed,Lack of necessary configuration！！！");
+            return;
+        }
+    }
+
+    @Override
+    public void destroy() {
+
+    }
+
     /**
      * 链接地址，上层manager封装
      */
     private String paasServerDomain;
     private String keyListenerUrl;
+    private String longPollingKeyListenerUrl;
     private String reportCircuitEventUrl;
     private String reportApisUrl;
     private String initNamespaceUrl;
     private AbstractHttpClient httpClient;
+    private AbstractHttpClient httpLongPollingClient;
 
     public FemasConfigHttpClientManager() {
         Map<String, String> configMap = commonContext.getRegistryConfigMap();
         HttpClientFactory httpClientFactory = new ApacheDefaultHttpClientFactory(DEFAULT_READ_TIME_OUT_MILLIS,
                 DEFAULT_CON_TIME_OUT_MILLIS);
+        HttpClientFactory httpLongPollingFactory = new ApacheLongPollingHttpClientFactory(DEFAULT_LONG_POLLING_CON_TIME_OUT_MILLIS,
+                DEFAULT_LONG_POLLING_READ_TIME_OUT_MILLIS);
 
         String paasServerDomainByConfig = null;
         if (configMap != null) {
@@ -71,12 +105,25 @@ public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManage
         }
         this.paasServerDomain = paasServerDomainByConfig;
         this.keyListenerUrl = paasServerDomain.concat(webContext).concat(fetchKeyUrl);
+        this.longPollingKeyListenerUrl = paasServerDomain.concat(webContext).concat(longPollingListenerKeyUrl);
         this.reportCircuitEventUrl = paasServerDomain.concat(webContext).concat(reportCircuitEvent);
         this.reportApisUrl = paasServerDomain.concat(webContext).concat(reportApis);
         this.initNamespaceUrl = paasServerDomain.concat(webContext).concat(intiNamespace);
         this.httpClient = ApacheHttpClientHolder.getHttpClient(httpClientFactory);
+        this.httpLongPollingClient = ApacheHttpClientHolder.getHttpClient(httpLongPollingFactory);
     }
 
+    @Override
+    public String getName() {
+        return ServerConnectorEnum.HTTP.name();
+    }
+
+    @Override
+    public String getType() {
+        return ServerConnectorEnum.HTTP.name();
+    }
+
+    @Override
     public void reportEvent(Service service, String eventId, String data) {
         if (context.isEmptyPaasServer()) {
             log.debug("reportEvent failed, could not find the paas address profile");
@@ -94,6 +141,7 @@ public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManage
         }
     }
 
+    @Override
     public void reportApis(String namespaceId, String serviceName, String applicationVersion, String data) {
         if (context.isEmptyPaasServer()) {
             log.debug("reportApis failed ,could not find the paas address profile");
@@ -119,6 +167,7 @@ public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManage
         }
     }
 
+    @Override
     public String fetchKVValue(String key, String namespaceId) {
 
         final Map<String, Object> params = new HashMap<>(3);
@@ -173,6 +222,7 @@ public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManage
         return header;
     }
 
+    @Override
     public void initNamespace(String registryAddress, String namespaceId) {
         if (StringUtils.isEmpty(namespaceId)) {
             log.error("namespace is empty");
@@ -195,4 +245,21 @@ public class FemasConfigHttpClientManager extends AbstractConfigHttpClientManage
         }
     }
 
+    @Override
+    public HttpResult<String> fetchLongPollingKvValue(String key, String namespaceId) {
+        final Map<String, Object> params = new HashMap<>(3);
+        params.put("namespaceId", namespaceId);
+        params.put("key", key);
+        if (context.isEmptyPaasServer()) {
+            log.debug("fetchLongPollingKvValue failed , could not find the paas address profile");
+            return null;
+        }
+        HttpResult<String> httpResult = null;
+        try {
+            httpResult = httpLongPollingClient.get(longPollingKeyListenerUrl, builderHeader(), params);
+        } catch (Exception e) {
+            log.error("config http manager fetchLongPollingKvValue failed", e);
+        }
+        return httpResult;
+    }
 }

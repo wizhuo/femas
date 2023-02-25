@@ -5,9 +5,9 @@ import static java.util.concurrent.Executors.newCachedThreadPool;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tencent.tsf.femas.common.httpclient.HttpLongPollingConnectorManager;
+import com.tencent.tsf.femas.common.httpclient.HttpStatus;
 import com.tencent.tsf.femas.common.util.*;
-import com.tencent.tsf.femas.config.AbstractConfigHttpClientManager;
-import com.tencent.tsf.femas.config.AbstractConfigHttpClientManagerFactory;
 import com.tencent.tsf.femas.config.enums.PropertyChangeType;
 import com.tencent.tsf.femas.config.internals.AbstractStringConfig;
 import com.tencent.tsf.femas.config.model.ConfigChangeEvent;
@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+
+import com.tencent.tsf.femas.governance.connector.server.ServerConnectorManager;
+import com.tencent.tsf.femas.plugin.impl.FemasPluginContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,14 +32,14 @@ public class PaasConfig extends AbstractStringConfig {
      */
     private static final int DEFAULT_WATCH_TIMEOUT = 55;
     private static volatile  ObjectMapper mapper = new ObjectMapper();
-    private AbstractConfigHttpClientManager manager;
+    private ServerConnectorManager manager;
     private String token;
     private ExecutorService notifierExecutor = newCachedThreadPool(
             new NamedThreadFactory("femas-paas-config-notifier", true));
     private Map<String, Notifier> notifiers = new ConcurrentHashMap<>();
 
     public PaasConfig(Map<String, String> configMap) {
-        this.manager = AbstractConfigHttpClientManagerFactory.getConfigHttpClientManager();
+        this.manager = FemasPluginContext.getServerConnectorManager();
     }
 
     @Override
@@ -103,7 +106,23 @@ public class PaasConfig extends AbstractStringConfig {
         }
 
         private void processValue() {
-            final String strValue = manager.fetchKVValue(key, "");
+            final String strValue;
+            if (manager instanceof HttpLongPollingConnectorManager) {
+                HttpLongPollingConnectorManager longPollingManager = (HttpLongPollingConnectorManager) manager;
+                HttpResult<String> httpResult = longPollingManager.fetchLongPollingKvValue(key, "");
+                //没有变化，则不处理后面
+                String stateCode = String.valueOf(HttpStatus.NO_CONTENT.value());
+                if (stateCode.equals(httpResult.getCode())) {
+                    LOGGER.info("[Femas paas Config Client] Key : " + key + ", no changed");
+                    return;
+                }
+                String listenerValue = httpResult.getData();
+                LOGGER.info("[Femas paas Config Client] Key : " + key + ", listener value = " + listenerValue);
+                LOGGER.info("[Femas paas Config Client] Key : " + key + " get new config value");
+                strValue = manager.fetchKVValue(key, "");
+            } else {
+                strValue = manager.fetchKVValue(key, "");
+            }
             Integer currentIndex = MD5Util.getIndex(strValue);
 
             if (currentIndex != null && currentIndex != index) {
@@ -156,7 +175,7 @@ public class PaasConfig extends AbstractStringConfig {
                     GetValue newValue = curEntry.getValue();
                     if (!oldValue.containsKey(newKey)) {
                         ConfigChangeEvent<String> event = new ConfigChangeEvent<>(newKey, null, newValue.getValue(),
-                                PropertyChangeType.MODIFIED);
+                                PropertyChangeType.ADDED);
                         configChangeEvents.add(event);
                     }
                 }

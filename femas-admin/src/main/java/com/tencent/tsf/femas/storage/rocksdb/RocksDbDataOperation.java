@@ -26,6 +26,10 @@ import com.tencent.tsf.femas.entity.rule.*;
 import com.tencent.tsf.femas.entity.rule.auth.AuthRuleModel;
 import com.tencent.tsf.femas.entity.rule.auth.ServiceAuthRuleModel;
 import com.tencent.tsf.femas.entity.rule.breaker.CircuitBreakerModel;
+import com.tencent.tsf.femas.entity.rule.lane.LaneInfo;
+import com.tencent.tsf.femas.entity.rule.lane.LaneInfoModel;
+import com.tencent.tsf.femas.entity.rule.lane.LaneRule;
+import com.tencent.tsf.femas.entity.rule.lane.LaneRuleModel;
 import com.tencent.tsf.femas.entity.rule.limit.LimitModel;
 import com.tencent.tsf.femas.entity.rule.route.Tolerate;
 import com.tencent.tsf.femas.entity.rule.route.TolerateModel;
@@ -334,25 +338,34 @@ public class RocksDbDataOperation implements DataOperation {
         if(fetchNamespaceById(namespaceId) != null){
             return;
         }
+
         String[] addresses = registryAddress.split(",");
         for(String registry : result.getData()){
             RegistryConfig config = JSONSerializer.deserializeStr(RegistryConfig.class, registry);
+            String registryCluster = config.getRegistryCluster();
+            if (StringUtils.isBlank(registryCluster)) {
+                continue;
+            }
+            // 对 localhost 进行转换
+            if (registryCluster.contains(AdminConstants.LOCALHOST_STRING)) {
+                registryCluster = registryCluster.replace(AdminConstants.LOCALHOST_STRING, AdminConstants.LOCALHOST_IP);
+            }
+            //获取注册中心信息
+            RegistryOpenApiInterface registryOpenApiInterface = factory.select(config.getRegistryType());
+            List<Namespace> namespaces = registryOpenApiInterface.allNamespaces(config);
+            Namespace remoteNamespace = namespaces.stream().filter(namespace -> namespace.getNamespaceId().equals(namespaceId)).findFirst().orElse(null);
             for(String address : addresses){
-                // 对 localhost 进行转换
-                String registryCluster = config.getRegistryCluster();
-                if (StringUtils.isBlank(registryCluster)) {
-                    continue;
-                }
-                if (registryCluster.contains("localhost")) {
-                    registryCluster = registryCluster.replace("localhost", "127.0.0.1");
-                }
-                if (address.contains("localhost")) {
-                    address = address.replace("localhost", "127.0.0.1");
+                if (address.contains(AdminConstants.LOCALHOST_STRING)) {
+                    address = address.replace(AdminConstants.LOCALHOST_STRING, AdminConstants.LOCALHOST_IP);
                 }
                 if(registryCluster.contains(address)){
                     Namespace namespace = new Namespace();
                     namespace.setNamespaceId(namespaceId);
-                    namespace.setName(DEFAULT_NAME);
+                    String namespaceName =DEFAULT_NAME;
+                    if(remoteNamespace!=null){
+                        namespaceName =StringUtils.isBlank(remoteNamespace.getName())?namespaceId: remoteNamespace.getName();
+                    }
+                    namespace.setName(namespaceName);
                     ArrayList<String> registryId = new ArrayList<>();
                     registryId.add(config.getRegistryId());
                     namespace.setRegistryId(registryId);
@@ -553,7 +566,7 @@ public class RocksDbDataOperation implements DataOperation {
     public int configureAuthRule(FemasAuthRule authRule) {
         if (StringUtils.isEmpty(authRule.getRuleId())) {
             authRule.setRuleId("auth-" + iidGeneratorService.nextHashId());
-            authRule.setCreateTime(new Date().getTime());
+            authRule.setCreateTime(System.currentTimeMillis());
         }
         // 静默处理
         if("1".equalsIgnoreCase(authRule.getIsEnabled())){
@@ -570,7 +583,7 @@ public class RocksDbDataOperation implements DataOperation {
             }
         }
         String authKey = "authority/" + authRule.getNamespaceId() + "/" + authRule.getServiceName() + "/" + authRule.getRuleId();
-        authRule.setAvailableTime(new Date().getTime());
+        authRule.setAvailableTime(System.currentTimeMillis());
         StorageResult res = kvStoreManager.put(authKey, JSONSerializer.serializeStr(authRule));
         if (res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)) {
             return 1;
@@ -632,7 +645,7 @@ public class RocksDbDataOperation implements DataOperation {
             circuitBreakerRule.setRuleId("bk-" + iidGeneratorService.nextHashId());
         }
         String cbKey = "circuitbreaker/" + circuitBreakerRule.getNamespaceId() + "/" + circuitBreakerRule.getServiceName() + "/" + circuitBreakerRule.getRuleId();
-        circuitBreakerRule.setUpdateTime(new Date().getTime());
+        circuitBreakerRule.setUpdateTime(System.currentTimeMillis());
         StorageResult res = kvStoreManager.put(cbKey, JSONSerializer.serializeStr(circuitBreakerRule));
         if(!res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
             return Result.errorMessage("服务熔断规则编辑失败");
@@ -699,7 +712,7 @@ public class RocksDbDataOperation implements DataOperation {
         if (StringUtils.isEmpty(limitRule.getRuleId())) {
             limitRule.setRuleId("lt-" + iidGeneratorService.nextHashId());
         }
-        limitRule.setUpdateTime(new Date().getTime());
+        limitRule.setUpdateTime(System.currentTimeMillis());
         String rateLimitKey = "ratelimit/" + limitRule.getNamespaceId() + "/" + limitRule.getServiceName() + "/" + limitRule.getRuleId();
         StorageResult res = kvStoreManager.put(rateLimitKey, JSONSerializer.serializeStr(limitRule));
         if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
@@ -793,7 +806,7 @@ public class RocksDbDataOperation implements DataOperation {
     public int configureRouteRule(FemasRouteRule routeRule) {
         if (StringUtils.isEmpty(routeRule.getRuleId())) {
             routeRule.setRuleId("rt-" + iidGeneratorService.nextHashId());
-            routeRule.setCreateTime(new Date().getTime());
+            routeRule.setCreateTime(System.currentTimeMillis());
         }
         // 静默处理
         if(!StringUtils.isEmpty(routeRule.getStatus()) && "1".equalsIgnoreCase(routeRule.getStatus())){
@@ -811,7 +824,7 @@ public class RocksDbDataOperation implements DataOperation {
                 }
             }
         }
-        routeRule.setUpdateTime(new Date().getTime());
+        routeRule.setUpdateTime(System.currentTimeMillis());
         String routeKey = "route/" + routeRule.getNamespaceId() + "/" + routeRule.getServiceName() + "/" + routeRule.getRuleId();
         StorageResult res = kvStoreManager.put(routeKey, JSONSerializer.serializeStr(routeRule));
         if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
@@ -828,7 +841,7 @@ public class RocksDbDataOperation implements DataOperation {
      */
     @Override
     public int configureRecord(Record record) {
-        StorageResult res = kvStoreManager.put(AdminConstants.RECORD_LOG.concat(new Date().getTime() + ""), JSONSerializer.serializeStr(record));
+        StorageResult res = kvStoreManager.put(AdminConstants.RECORD_LOG.concat(System.currentTimeMillis() + ""), JSONSerializer.serializeStr(record));
         if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
             return 1;
         }
@@ -1248,6 +1261,161 @@ public class RocksDbDataOperation implements DataOperation {
         return new PageService<FemasRouteRule>(data,routeRules.size());
     }
 
+    @Override
+    public Integer configureLane(LaneInfo laneInfo) {
+        if (StringUtils.isEmpty(laneInfo.getLaneId())) {
+            laneInfo.setLaneId("lane-" + iidGeneratorService.nextHashId());
+            laneInfo.setCreateTime(System.currentTimeMillis());
+        }
+        laneInfo.setUpdateTime(System.currentTimeMillis());
+        String routeKey = "lane-info/" + laneInfo.getLaneId();
+        StorageResult res = kvStoreManager.put(routeKey, JSONSerializer.serializeStr(laneInfo));
+        if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
+            return 1;
+        }
+        return 0;
+    }
+
+    @Override
+    public LaneInfo fetchLaneById(String laneId) {
+        StorageResult<String> stringStorageResult = kvStoreManager.get("lane-info/" + laneId);
+        if(stringStorageResult.getData() == null)
+            return null;
+        LaneInfo res = JSONSerializer.deserializeStr(LaneInfo.class, stringStorageResult.getData());
+        return res;
+    }
+
+    @Override
+    public PageService<LaneInfo> fetchLaneInfoPages(LaneInfoModel laneInfoModel) {
+        List<LaneInfo> laneInfoTemp = fetchLaneInfo();
+        List<LaneInfo> laneInfos = new ArrayList<>();
+        // 条件过滤
+        for (LaneInfo laneInfo : laneInfoTemp){
+            if(!StringUtils.isEmpty(laneInfoModel.getLaneId()) && !laneInfo.getLaneId().contains(laneInfoModel.getLaneId())){
+                continue;
+            }
+            if(!StringUtils.isEmpty(laneInfoModel.getLaneName()) && !laneInfo.getLaneName().contains(laneInfoModel.getLaneName())){
+                continue;
+            }
+            if(!StringUtils.isEmpty(laneInfoModel.getRemark()) && !laneInfo.getRemark().contains(laneInfoModel.getRemark())){
+                continue;
+            }
+            laneInfos.add(laneInfo);
+        }
+        Comparator<LaneInfo> comparator = new Comparator<LaneInfo>() {
+            @Override
+            public int compare(LaneInfo o1, LaneInfo o2) {
+                return (int) (o2.getUpdateTime() - o1.getUpdateTime());
+            }
+        };
+        List<LaneInfo> data = PageUtil.pageList(laneInfos, laneInfoModel.getPageNo(), laneInfoModel.getPageSize(), comparator);
+        return new PageService<LaneInfo>(data,laneInfos.size());
+    }
+
+    @Override
+    public Integer deleteLane(String laneId) {
+        String routeKey = "lane-info/" + laneId;
+        StorageResult res = kvStoreManager.delete(routeKey);
+        if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
+            return 1;
+        }
+        return 0;
+    }
+
+    @Override
+    public Integer configureLaneRule(LaneRule laneRule) {
+        if (StringUtils.isEmpty(laneRule.getRuleId())) {
+            laneRule.setRuleId("lane-rule-" + iidGeneratorService.nextHashId());
+            long time = System.currentTimeMillis();
+            laneRule.setCreateTime(time);
+            laneRule.setPriority(time);
+        }
+        laneRule.setUpdateTime(System.currentTimeMillis());
+        String routeKey = "lane-rule/" + laneRule.getRuleId();
+        StorageResult res = kvStoreManager.put(routeKey, JSONSerializer.serializeStr(laneRule));
+        if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
+            return 1;
+        }
+        return 0;
+    }
+
+    @Override
+    public LaneRule fetchLaneRuleById(String laneRuleId) {
+        StorageResult<String> stringStorageResult = kvStoreManager.get("lane-rule/" + laneRuleId);
+        if(stringStorageResult.getData() == null)
+            return null;
+        LaneRule res = JSONSerializer.deserializeStr(LaneRule.class, stringStorageResult.getData());
+        return res;
+    }
+
+    @Override
+    public PageService<LaneRule> fetchLaneRulePages(LaneRuleModel laneRuleModel) {
+        List<LaneRule> laneRulesTemp = fetchLaneRule();
+        List<LaneRule> laneRules = new ArrayList<>();
+        // 条件过滤
+        for (LaneRule laneRule : laneRulesTemp){
+            if(!StringUtils.isEmpty(laneRuleModel.getRuleId()) && !laneRule.getRuleId().contains(laneRuleModel.getRuleId())){
+                continue;
+            }
+            if(!StringUtils.isEmpty(laneRuleModel.getRuleName()) && !laneRule.getRuleName().contains(laneRuleModel.getRuleName())){
+                continue;
+            }
+            if(!StringUtils.isEmpty(laneRuleModel.getRemark()) && !laneRule.getRemark().contains(laneRuleModel.getRemark())){
+                continue;
+            }
+            laneRules.add(laneRule);
+        }
+        Comparator<LaneRule> comparator = new Comparator<LaneRule>() {
+            @Override
+            public int compare(LaneRule o1, LaneRule o2) {
+                return (int) (o2.getUpdateTime() - o1.getUpdateTime());
+            }
+        };
+        List<LaneRule> data = PageUtil.pageList(laneRules, laneRuleModel.getPageNo(), laneRuleModel.getPageSize(), comparator);
+        return new PageService<LaneRule>(data,laneRules.size());
+    }
+
+    @Override
+    public Integer deleteLaneRule(String laneRuleId) {
+        String routeKey = "lane-rule/" + laneRuleId;
+        StorageResult res = kvStoreManager.delete(routeKey);
+        if(res.getStatus().equalsIgnoreCase(StorageResult.SUCCESS)){
+            return 1;
+        }
+        return 0;
+    }
+
+    @Override
+    public List<LaneInfo> fetchLaneInfo() {
+        String laneKey = "lane-info/";
+        StorageResult<List<String>> storageResult = kvStoreManager.scanPrefix(laneKey);
+        ArrayList<LaneInfo> laneInfos = new ArrayList<>();
+        if (!CollectionUtil.isEmpty(storageResult.getData())) {
+            List<String> ids = storageResult.getData();
+            for(String id : ids){
+                StorageResult<String> result = kvStoreManager.get(id);
+                LaneInfo laneInfo = JSONSerializer.deserializeStr(LaneInfo.class, result.getData());
+                laneInfos.add(laneInfo);
+            }
+        }
+        return laneInfos;
+    }
+
+    @Override
+    public List<LaneRule> fetchLaneRule() {
+        String laneRuleKey = "lane-rule/";
+        StorageResult<List<String>> storageResult = kvStoreManager.scanPrefix(laneRuleKey);
+        ArrayList<LaneRule> laneRules = new ArrayList<>();
+        if (!CollectionUtil.isEmpty(storageResult.getData())) {
+            List<String> ids = storageResult.getData();
+            for(String id : ids){
+                StorageResult<String> result = kvStoreManager.get(id);
+                LaneRule laneRule = JSONSerializer.deserializeStr(LaneRule.class, result.getData());
+                laneRules.add(laneRule);
+            }
+        }
+        return laneRules;
+    }
 
     public static enum OptionType{
         ADD,

@@ -29,6 +29,10 @@ import com.tencent.tsf.femas.entity.rule.*;
 import com.tencent.tsf.femas.entity.rule.auth.AuthRuleModel;
 import com.tencent.tsf.femas.entity.rule.auth.ServiceAuthRuleModel;
 import com.tencent.tsf.femas.entity.rule.breaker.CircuitBreakerModel;
+import com.tencent.tsf.femas.entity.rule.lane.LaneInfo;
+import com.tencent.tsf.femas.entity.rule.lane.LaneInfoModel;
+import com.tencent.tsf.femas.entity.rule.lane.LaneRule;
+import com.tencent.tsf.femas.entity.rule.lane.LaneRuleModel;
 import com.tencent.tsf.femas.entity.rule.limit.LimitModel;
 import com.tencent.tsf.femas.entity.rule.route.RouteTag;
 import com.tencent.tsf.femas.entity.rule.route.Tolerate;
@@ -272,20 +276,37 @@ public class MysqlDataOperation implements DataOperation {
         }
         String[] addresses = registryAddress.split(",");
         for(RegistryConfig config : registryConfigs){
+            String registryCluster = config.getRegistryCluster();
+            if (StringUtils.isBlank(registryCluster)) {
+                continue;
+            }
+            // 对 localhost 进行转换
+            if (registryCluster.contains(AdminConstants.LOCALHOST_STRING)) {
+                registryCluster = registryCluster.replace(AdminConstants.LOCALHOST_STRING, AdminConstants.LOCALHOST_IP);
+            }
+
+            //获取注册中心信息
+            RegistryOpenApiInterface registryOpenApiInterface = factory.select(config.getRegistryType());
+            List<Namespace> namespaces = registryOpenApiInterface.allNamespaces(config);
+            Namespace remoteNamespace = namespaces.stream().filter(namespace -> namespace.getNamespaceId().equals(namespaceId)).findFirst().orElse(null);
             for(String address : addresses){
                 // 对 localhost 进行转换
-                String registryCluster = config.getRegistryCluster();
-                if (registryCluster.contains("localhost")) {
-                    registryCluster = registryCluster.replace("localhost", "127.0.0.1");
-                }
-                if (address.contains("localhost")) {
-                    address = address.replace("localhost", "127.0.0.1");
+                if (address.contains(AdminConstants.LOCALHOST_STRING)) {
+                    address = address.replace(AdminConstants.LOCALHOST_STRING, AdminConstants.LOCALHOST_IP);
                 }
                 if(registryCluster.contains(address)){
+                    Namespace namespace = new Namespace();
+                    namespace.setNamespaceId(namespaceId);
+                    String namespaceName =DEFAULT_NAME;
+                    if(remoteNamespace!=null){
+                        namespaceName =StringUtils.isBlank(remoteNamespace.getName())?namespaceId: remoteNamespace.getName();
+                    }
+                    namespace.setName(namespaceName);
                     ArrayList<String> registryId = new ArrayList<>();
                     registryId.add(config.getRegistryId());
-                    manager.update("insert into namespace(namespace_id,registry_id,namespace.name,namespace.desc) values(?,?,?,?)",
-                            namespaceId, JSONSerializer.serializeStr(registryId) , DEFAULT_NAME, DEFAULT_DESC);
+                    namespace.setRegistryId(registryId);
+                    namespace.setDesc(DEFAULT_DESC);
+                    createNamespace(namespace);
                     return;
                 }
             }
@@ -490,8 +511,8 @@ public class MysqlDataOperation implements DataOperation {
         int res = 0;
         if (StringUtils.isEmpty(authRule.getRuleId())) {
             authRule.setRuleId("auth-" + iidGeneratorService.nextHashId());
-            authRule.setCreateTime(new Date().getTime());
-            authRule.setAvailableTime(new Date().getTime());
+            authRule.setCreateTime(System.currentTimeMillis());
+            authRule.setAvailableTime(System.currentTimeMillis());
             res = manager.update("insert into auth_rule(rule_id,rule_name,is_enable,rule_type,create_time," +
                     "available_time,service_name,namespace_id,tags,tag_program,target,auth_rule.desc) values(?,?,?,?,?,?,?,?,?,?,?,?)",
                     authRule.getRuleId(), authRule.getRuleName(),
@@ -505,7 +526,7 @@ public class MysqlDataOperation implements DataOperation {
                     "available_time=?, tags=?, tag_program=?, target=?, auth_rule.desc=? " +
                     "where rule_id=?",
                     authRule.getRuleName(), authRule.getIsEnabled(),
-                    authRule.getRuleType().name(), new Date().getTime(),
+                    authRule.getRuleType().name(), System.currentTimeMillis(),
                     JSONSerializer.serializeStr(authRule.getTags()), authRule.getTagProgram(),
                     authRule.getTarget(), authRule.getDesc(),
                     authRule.getRuleId());
@@ -555,14 +576,14 @@ public class MysqlDataOperation implements DataOperation {
                     circuitBreakerRule.getTargetNamespaceId(), circuitBreakerRule.getTargetServiceName(),
                     circuitBreakerRule.getRuleName(), circuitBreakerRule.getIsolationLevel(),
                     JSONSerializer.serializeStr(circuitBreakerRule.getStrategy()), circuitBreakerRule.getIsEnable(),
-                    new Date().getTime(), circuitBreakerRule.getDesc());
+                    System.currentTimeMillis(), circuitBreakerRule.getDesc());
         }else{
             res = manager.update("update circuit_breaker_rule set target_namespace_id=?,target_service_name=?, " +
                     "rule_name=?, isolation_level=?, strategy=?, is_enable=?, update_time=?, circuit_breaker_rule.desc=? where rule_id=?",
                     circuitBreakerRule.getTargetNamespaceId(), circuitBreakerRule.getTargetServiceName(),
                     circuitBreakerRule.getRuleName(),circuitBreakerRule.getIsolationLevel(),
                     JSONSerializer.serializeStr(circuitBreakerRule.getStrategy()), circuitBreakerRule.getIsEnable(),
-                    new Date().getTime(), circuitBreakerRule.getDesc(), circuitBreakerRule.getRuleId());
+                    System.currentTimeMillis(), circuitBreakerRule.getDesc(), circuitBreakerRule.getRuleId());
         }
         if(ResultCheck.checkCount(res)){
             return Result.successMessage("服务熔断规则编辑成功");
@@ -608,7 +629,7 @@ public class MysqlDataOperation implements DataOperation {
      */
     @Override
     public int configureLimitRule(FemasLimitRule limitRule) {
-        limitRule.setUpdateTime(new Date().getTime());
+        limitRule.setUpdateTime(System.currentTimeMillis());
         if (StringUtils.isEmpty(limitRule.getRuleId())) {
             limitRule.setRuleId("lt-" + iidGeneratorService.nextHashId());
             return manager.update("insert into rate_limit_rule(rule_id,namespace_id,service_name,rule_name,type,tags,duration,total_quota,status,update_time,rate_limit_rule.desc) " +
@@ -694,10 +715,10 @@ public class MysqlDataOperation implements DataOperation {
             manager.update("update route_rule set route_rule.status='0' where namespace_id=? and service_name=?",
                     routeRule.getNamespaceId(), routeRule.getServiceName());
         }
-        routeRule.setUpdateTime(new Date().getTime());
+        routeRule.setUpdateTime(System.currentTimeMillis());
         if (StringUtils.isEmpty(routeRule.getRuleId())) {
             routeRule.setRuleId("rt-" + iidGeneratorService.nextHashId());
-            routeRule.setCreateTime(new Date().getTime());
+            routeRule.setCreateTime(System.currentTimeMillis());
             return manager.update("insert into route_rule(rule_id,namespace_id,service_name,rule_name,route_rule.status,route_tag,create_time,update_time,route_rule.desc) " +
                             "values(?,?,?,?,?,?,?,?,?)",
                     routeRule.getRuleId(), routeRule.getNamespaceId(), routeRule.getServiceName(),
@@ -725,7 +746,7 @@ public class MysqlDataOperation implements DataOperation {
                 record.getLogId(), record.getUser(),
                 record.getStatus() ? 1 : 0, record.getDetail(),
                 record.getType(), record.getModule(),
-                new Date().getTime());
+                System.currentTimeMillis());
     }
 
     /**
@@ -940,7 +961,7 @@ public class MysqlDataOperation implements DataOperation {
         String join = configIdList.stream().map(str -> "'" + str + "'").collect(Collectors.joining(", "));
 //        String sql = "select config_id configId, count(1) versionCount , max(log.release_time) releaseTime from dcfg_config_version version left join dcfg_config_release_log log on version.config_version_id = log.config_version_id "
 //        +" where log.release_status = 'S' and version.config_id in( " + join + " )";
-        String sql = "select config_id configId, count(1) versionCount from dcfg_config_version where config_id in( " + join + " )";
+        String sql = "select config_id configId, count(1) versionCount from dcfg_config_version where config_id in( " + join + " ) group by config_id";
         return manager.selectListPojo(sql, Config.class);
     }
 
@@ -1089,4 +1110,130 @@ public class MysqlDataOperation implements DataOperation {
                 serviceModel.getPageNo(), serviceModel.getPageSize(),
                 serviceModel.getNamespaceId(), serviceModel.getServiceName());
     }
+
+    @Override
+    public Integer configureLane(LaneInfo laneInfo) {
+        if (StringUtils.isEmpty(laneInfo.getLaneId())) {
+            laneInfo.setLaneId("lane-" + iidGeneratorService.nextHashId());
+            long time = System.currentTimeMillis();
+            laneInfo.setCreateTime(time);
+            laneInfo.setUpdateTime(time);
+            return manager.update("insert into lane_info(lane_id,lane_name,remark,create_time,update_time,lane_service_list,stable_service_list) " +
+                            "values(?,?,?,?,?,?,?)",
+                    laneInfo.getLaneId(), laneInfo.getLaneName(),
+                    laneInfo.getRemark(), laneInfo.getCreateTime(),
+                    laneInfo.getUpdateTime(), JSONSerializer.serializeStr(laneInfo.getLaneServiceList()),
+                    JSONSerializer.serializeStr(laneInfo.getStableServiceList()));
+        }else {
+            laneInfo.setUpdateTime(System.currentTimeMillis());
+            return manager.update("update lane_info set lane_name=?, remark=?, create_time=?, update_time=?, lane_service_list=?, stable_service_list=? where lane_id=?",
+                    laneInfo.getLaneName(), laneInfo.getRemark(),
+                    laneInfo.getCreateTime(), laneInfo.getUpdateTime(),
+                    JSONSerializer.serializeStr(laneInfo.getLaneServiceList()),
+                    JSONSerializer.serializeStr(laneInfo.getStableServiceList()), laneInfo.getLaneId());
+        }
+    }
+
+    @Override
+    public LaneInfo fetchLaneById(String laneId) {
+        RowMapper<LaneInfo> mapper = RowMapperFactory.getMapper(LANE_INFO);
+        return manager.selectById(mapper,"lane_info", "lane_id", laneId);
+    }
+
+    @Override
+    public PageService<LaneInfo> fetchLaneInfoPages(LaneInfoModel laneInfoModel) {
+        RowMapper rowMapper = RowMapperFactory.getMapper(LANE_INFO);
+        PageService pageService;
+        String sql = "select * from lane_info";
+        if(!StringUtils.isEmpty(laneInfoModel.getLaneId())){
+            sql += " and lane_info.lane_id like '%" + laneInfoModel.getLaneId() + "%'";
+        }
+        if(!StringUtils.isEmpty(laneInfoModel.getLaneName())){
+            sql += " and lane_info.lane_name like '%" + laneInfoModel.getLaneName() + "%'";
+        }
+        if(!StringUtils.isEmpty(laneInfoModel.getRemark())){
+            sql += " and lane_info.remark like '%" + laneInfoModel.getRemark() + "%'";
+        }
+        sql = sql.replaceFirst("and", "where");
+        pageService = manager.selectByPagesOrdered(rowMapper, sql,
+                laneInfoModel.getPageNo(), laneInfoModel.getPageSize(),
+                DESC, "update_time");
+        return pageService;
+    }
+
+
+    @Override
+    public Integer deleteLane(String laneId) {
+        return manager.deleteById("lane_info", "lane_id", laneId);
+    }
+
+    @Override
+    public Integer configureLaneRule(LaneRule laneRule) {
+        if (StringUtils.isEmpty(laneRule.getRuleId())) {
+            laneRule.setRuleId("laneRule-" + iidGeneratorService.nextHashId());
+            long time = System.currentTimeMillis();
+            laneRule.setCreateTime(time);
+            laneRule.setUpdateTime(time);
+            laneRule.setPriority(time);
+            return manager.update("insert into lane_rule(rule_id,rule_name,remark,enable,create_time,update_time,relative_lane,rule_tag_list,rule_tag_relationship,gray_type,priority) " +
+                            "values(?,?,?,?,?,?,?,?,?,?,?)",
+                    laneRule.getRuleId(), laneRule.getRuleName(),
+                    laneRule.getRemark(), laneRule.getEnable(),
+                    laneRule.getCreateTime(), laneRule.getUpdateTime(), JSONSerializer.serializeStr(laneRule.getRelativeLane()),
+                    JSONSerializer.serializeStr(laneRule.getRuleTagList()), laneRule.getRuleTagRelationship().toString(), laneRule.getGrayType().toString(), laneRule.getPriority());
+        }else {
+            laneRule.setUpdateTime(System.currentTimeMillis());
+            return manager.update("update lane_rule set rule_name=?, remark=?, enable=?, create_time=?, update_time=?, relative_lane=?, rule_tag_list=?, rule_tag_relationship=?, gray_type=?, priority=? where rule_id=?",
+                    laneRule.getRuleName(), laneRule.getRemark(),
+                    laneRule.getEnable(), laneRule.getCreateTime(),
+                    laneRule.getUpdateTime(), JSONSerializer.serializeStr(laneRule.getRelativeLane()),
+                    JSONSerializer.serializeStr(laneRule.getRuleTagList()),
+                    laneRule.getRuleTagRelationship().toString(),laneRule.getGrayType().toString(), laneRule.getPriority(), laneRule.getRuleId());
+        }
+    }
+
+    @Override
+    public LaneRule fetchLaneRuleById(String laneRuleId) {
+        RowMapper<LaneRule> mapper = RowMapperFactory.getMapper(LANE_RULE);
+        return manager.selectById(mapper,"lane_rule", "rule_id", laneRuleId);
+    }
+
+    @Override
+    public PageService<LaneRule> fetchLaneRulePages(LaneRuleModel laneRuleModel) {
+        RowMapper rowMapper = RowMapperFactory.getMapper(LANE_RULE);
+        PageService pageService;
+        String sql = "select * from lane_rule";
+        if(!StringUtils.isEmpty(laneRuleModel.getRuleId())){
+            sql += " and lane_rule.rule_id like '%" + laneRuleModel.getRuleId() + "%'";
+        }
+        if(!StringUtils.isEmpty(laneRuleModel.getRemark())){
+            sql += " and lane_rule.remark like '%" + laneRuleModel.getRemark() + "%'";
+        }
+        if(!StringUtils.isEmpty(laneRuleModel.getRuleName())){
+            sql += " and lane_rule.rule_name like '%" + laneRuleModel.getRuleName() + "%'";
+        }
+        sql = sql.replaceFirst("and", "where");
+        pageService = manager.selectByPagesOrdered(rowMapper, sql,
+                laneRuleModel.getPageNo(), laneRuleModel.getPageSize(),
+                DESC, "priority");
+        return pageService;
+    }
+
+    @Override
+    public Integer deleteLaneRule(String laneRuleId) {
+        return manager.deleteById("lane_rule", "rule_id", laneRuleId);
+    }
+
+    @Override
+    public List<LaneInfo> fetchLaneInfo() {
+        RowMapper rowMapper = RowMapperFactory.getMapper(LANE_INFO);
+        return manager.selectListPojoByMapper(rowMapper, "select * from lane_info");
+    }
+
+    @Override
+    public List<LaneRule> fetchLaneRule() {
+        RowMapper rowMapper = RowMapperFactory.getMapper(LANE_RULE);
+        return manager.selectListPojoByMapper(rowMapper, "select * from lane_rule");
+    }
+
 }

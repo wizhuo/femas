@@ -3,14 +3,10 @@ package com.tencent.tsf.femas.endpoint.configlisten;
 import com.tencent.tsf.femas.constant.IgnorePrefix;
 import com.tencent.tsf.femas.endpoint.adaptor.AbstractBaseEndpoint;
 import com.tencent.tsf.femas.entity.registry.ServiceApiRequest;
-import com.tencent.tsf.femas.enums.ServiceInvokeEnum;
+import com.tencent.tsf.femas.service.http.HttpLongPollingDataUpdateService;
+import com.tencent.tsf.femas.service.namespace.NamespaceMangerService;
 import com.tencent.tsf.femas.service.registry.ServiceManagerService;
 import com.tencent.tsf.femas.service.rule.ConvertService;
-import com.tencent.tsf.femas.storage.StorageResult;
-import com.tencent.tsf.femas.storage.rocksdb.StringRawKVStoreManager;
-
-import java.util.HashMap;
-import java.util.List;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +14,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import javax.servlet.http.HttpServletRequest;
 
 
 /**
@@ -38,16 +36,29 @@ public class LongPollingEndpoint extends AbstractBaseEndpoint {
 
     private final ServiceManagerService serviceManagerService;
 
+    private final NamespaceMangerService namespaceMangerService;
+
+    private final HttpLongPollingDataUpdateService httpLongPollingDataUpdateService;
+
     public LongPollingEndpoint(ConvertService convertService,
-                               ServiceManagerService serviceManagerService) {
+                               ServiceManagerService serviceManagerService,
+                               NamespaceMangerService namespaceMangerService,
+                               HttpLongPollingDataUpdateService httpLongPollingDataUpdateService) {
 //        this.kvStoreManager = kvStoreManager;
         this.convertService = convertService;
         this.serviceManagerService = serviceManagerService;
+        this.namespaceMangerService = namespaceMangerService;
+        this.httpLongPollingDataUpdateService = httpLongPollingDataUpdateService;
     }
 
     @GetMapping("fetchData")
     public String fetchBreakerRule(String key) {
         return convertService.convert(key);
+    }
+
+    @GetMapping("listener")
+    public void longPollingListener(final HttpServletRequest request, String key) {
+        httpLongPollingDataUpdateService.doLongPolling(convertService.getKeyType(key), request);
     }
 
 //    @GetMapping("showData")
@@ -87,6 +98,7 @@ public class LongPollingEndpoint extends AbstractBaseEndpoint {
      */
     @PostMapping("initNamespace")
     public void initNamespace(String registryAddress, String namespaceId) {
-        executor.invoke(ServiceInvokeEnum.ApiInvokeEnum.NAMESPACE_MANGER_INIT, registryAddress, namespaceId);
+        namespaceMangerService.initNamespace(registryAddress,namespaceId);
+//        executor.invoke(ServiceInvokeEnum.ApiInvokeEnum.NAMESPACE_MANGER_INIT, registryAddress, namespaceId);
     }
 }

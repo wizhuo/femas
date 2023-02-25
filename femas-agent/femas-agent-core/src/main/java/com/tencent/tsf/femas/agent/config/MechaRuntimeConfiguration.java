@@ -32,7 +32,7 @@ import java.util.List;
 public class MechaRuntimeConfiguration implements Configuration{
 
     @JsonProperty
-    private List<GlobalInterceptPluginConfig> interceptors;
+    private List<InterceptPluginConfig> interceptors;
 
     @Override
     public void verify() throws IllegalArgumentException {
@@ -44,12 +44,12 @@ public class MechaRuntimeConfiguration implements Configuration{
 
     }
 
-    public void setInterceptors(List<GlobalInterceptPluginConfig> interceptors) {
+    public void setInterceptors(List<InterceptPluginConfig> interceptors) {
         this.interceptors = interceptors;
     }
 
     @Override
-    public List<GlobalInterceptPluginConfig> getInterceptors() {
+    public List<InterceptPluginConfig> getInterceptors() {
         return interceptors;
     }
 

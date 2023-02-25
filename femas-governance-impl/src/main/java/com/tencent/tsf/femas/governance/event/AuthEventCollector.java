@@ -1,9 +1,10 @@
 package com.tencent.tsf.femas.governance.event;
 
 
-import com.tencent.tsf.femas.governance.auth.entity.AuthRuleGroup;
 import java.util.Date;
 import java.util.Map;
+
+import com.tencent.tsf.femas.plugin.impl.config.rule.auth.AuthRuleGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,7 +20,7 @@ public class AuthEventCollector extends EventCollector {
         FemasEventData eventData = FemasEventData.custom()
                 .setEventType(EventTypeEnum.AUTH)
                 .setInstanceId(instanceId)
-                .setOccurTime(new Date().getTime())
+                .setOccurTime(System.currentTimeMillis())
                 .setUpstream(sysTag.get("source.service.name"))
                 .setDownstream(sysTag.get("service.name"))
                 .setAddition(UPSTREAM_NAMESPACE_ID_KEY, sysTag.get("namespace.id"))
